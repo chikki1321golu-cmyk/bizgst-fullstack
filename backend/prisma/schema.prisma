@@ -1,0 +1,257 @@
+// BizGST — Prisma Schema
+// PostgreSQL database schema for GST accounting system
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────────
+
+model User {
+  id         String   @id @default(uuid())
+  mobile     String?  @unique
+  email      String?  @unique
+  name       String?
+  isVerified Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  businesses Business[]
+  otpCodes   OtpCode[]
+
+  @@map("users")
+}
+
+model OtpCode {
+  id        String   @id @default(uuid())
+  userId    String
+  code      String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("otp_codes")
+}
+
+// ─────────────────────────────────────────────
+// BUSINESS
+// ─────────────────────────────────────────────
+
+model Business {
+  id           String       @id @default(uuid())
+  userId       String
+  name         String
+  gstin        String       @unique
+  stateCode    String       // e.g. "27" for Maharashtra
+  stateName    String
+  address      String?
+  businessType BusinessType @default(RETAIL)
+  pan          String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products  Product[]
+  parties   Party[]
+  invoices  Invoice[]
+  gstReturn GstReturn[]
+
+  @@map("businesses")
+}
+
+enum BusinessType {
+  RETAIL
+  WHOLESALE
+  MANUFACTURER
+  SERVICE
+}
+
+// ─────────────────────────────────────────────
+// PARTY (Customer / Vendor)
+// ─────────────────────────────────────────────
+
+model Party {
+  id         String    @id @default(uuid())
+  businessId String
+  name       String
+  mobile     String?
+  email      String?
+  gstin      String?   // If present → B2B
+  stateCode  String?
+  stateName  String?
+  address    String?
+  type       PartyType
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+
+  @@index([businessId, type])
+  @@map("parties")
+}
+
+enum PartyType {
+  CUSTOMER
+  VENDOR
+}
+
+// ─────────────────────────────────────────────
+// PRODUCTS
+// ─────────────────────────────────────────────
+
+model Product {
+  id          String   @id @default(uuid())
+  businessId  String
+  name        String
+  description String?
+  hsnCode     String   // HSN/SAC code — mandatory for GST
+  gstRate     Float    // 0, 5, 12, 18, 28
+  unit        String   @default("Nos")
+  basePrice   Float    @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoiceItems InvoiceItem[]
+
+  @@index([businessId])
+  @@map("products")
+}
+
+// ─────────────────────────────────────────────
+// INVOICES
+// ─────────────────────────────────────────────
+
+model Invoice {
+  id            String      @id @default(uuid())
+  businessId    String
+  partyId       String?
+  invoiceNumber String
+  invoiceDate   DateTime
+  invoiceType   InvoiceType // SALE | PURCHASE
+  supplyType    SupplyType  // B2B | B2CS | B2C | EXPORT
+  isInterstate  Boolean     @default(false)
+  isRcm         Boolean     @default(false) // Reverse Charge Mechanism
+
+  // Tax amounts (stored for immutability — never re-compute from items)
+  taxableAmount Float
+  cgst          Float       @default(0)
+  sgst          Float       @default(0)
+  igst          Float       @default(0)
+  cess          Float       @default(0)
+  totalAmount   Float
+
+  // ITC (for purchases)
+  itcEligible   Boolean?
+  itcCgst       Float       @default(0)
+  itcSgst       Float       @default(0)
+  itcIgst       Float       @default(0)
+
+  notes         String?
+  status        InvoiceStatus @default(ACTIVE)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  party    Party?       @relation(fields: [partyId], references: [id])
+  items    InvoiceItem[]
+
+  @@unique([businessId, invoiceNumber, invoiceType])
+  @@index([businessId, invoiceType])
+  @@index([businessId, invoiceDate])
+  @@map("invoices")
+}
+
+enum InvoiceType {
+  SALE
+  PURCHASE
+}
+
+enum SupplyType {
+  B2B      // Business to Business (GSTIN present)
+  B2CS     // Business to Consumer Large (≥2.5L)
+  B2C      // Business to Consumer Small
+  EXPORT   // Zero rated export
+  SEZ      // Special Economic Zone
+}
+
+enum InvoiceStatus {
+  ACTIVE
+  CANCELLED
+  CREDIT_NOTE
+  DEBIT_NOTE
+}
+
+// ─────────────────────────────────────────────
+// INVOICE LINE ITEMS
+// ─────────────────────────────────────────────
+
+model InvoiceItem {
+  id            String   @id @default(uuid())
+  invoiceId     String
+  productId     String?
+  description   String   // Denormalized for historical accuracy
+  hsnCode       String   // Denormalized
+  quantity      Float
+  unit          String
+  unitPrice     Float
+  discount      Float    @default(0)
+  taxableAmount Float    // After discount
+  gstRate       Float    // Snapshot of rate at time of invoice
+  cgst          Float    @default(0)
+  sgst          Float    @default(0)
+  igst          Float    @default(0)
+  totalAmount   Float
+  createdAt     DateTime @default(now())
+
+  invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+// ─────────────────────────────────────────────
+// GST RETURNS
+// ─────────────────────────────────────────────
+
+model GstReturn {
+  id          String          @id @default(uuid())
+  businessId  String
+  returnType  GstReturnType   // GSTR1 | GSTR3B
+  period      String          // "032025" format
+  status      GstReturnStatus @default(DRAFT)
+  jsonPayload Json?           // Stored GST JSON payload
+  filedAt     DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, returnType, period])
+  @@map("gst_returns")
+}
+
+enum GstReturnType {
+  GSTR1
+  GSTR3B
+}
+
+enum GstReturnStatus {
+  DRAFT
+  READY
+  FILED
+  ACCEPTED
+}
