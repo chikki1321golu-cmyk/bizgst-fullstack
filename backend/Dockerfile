@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies first (layer cache)
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # Copy source
 COPY . .
@@ -14,4 +14,4 @@ RUN npx prisma generate
 
 EXPOSE 5000
 
-CMD ["npm", "run", "dev"]
+CMD ["npm", "start"]
