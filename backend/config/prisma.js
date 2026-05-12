@@ -3,7 +3,7 @@
  * Reuses a single client instance across the app to avoid connection pool exhaustion
  */
 const { PrismaClient } = require('@prisma/client');
-const { logger } = require('../utils/logger');
+const { logger } = require('../src/utils/logger');
 
 const prisma = new PrismaClient({
   log: [
