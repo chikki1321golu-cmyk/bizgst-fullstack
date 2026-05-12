@@ -8,18 +8,23 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
-const authRoutes = require('./routes/auth.routes');
-const businessRoutes = require('./routes/business.routes');
-const salesRoutes = require('./routes/sales.routes');
+const authRoutes      = require('./routes/auth.routes');
+const businessRoutes  = require('./routes/business.routes');
+const salesRoutes     = require('./routes/sales.routes');
 const purchasesRoutes = require('./routes/purchases.routes');
-const productsRoutes = require('./routes/products.routes');
-const partiesRoutes = require('./routes/parties.routes');
-const gstRoutes = require('./routes/gst.routes');
-const exportRoutes = require('./routes/export.routes');
+const productsRoutes  = require('./routes/products.routes');
+const partiesRoutes   = require('./routes/parties.routes');
+const gstRoutes       = require('./routes/gst.routes');
+const exportRoutes    = require('./routes/export.routes');
 const { errorHandler } = require('./middleware/error.middleware');
-const { logger } = require('./utils/logger');
+const { logger }       = require('./utils/logger');
 
 const app = express();
+
+// ── Trust Proxy (Required for Railway) ──────
+// Railway sits behind a load balancer — this fixes
+// the X-Forwarded-For rate limit error
+app.set('trust proxy', 1);
 
 // ── Security Headers ────────────────────────
 app.use(helmet());
@@ -29,14 +34,14 @@ app.use(cors({
   origin: function(origin, callback) {
     // Allow requests with no origin (mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
-    
+
     const allowedOrigins = [
       process.env.FRONTEND_URL,
       'http://localhost:3000',
       'https://localhost:3000',
     ].filter(Boolean);
 
-    // Allow any vercel.app domain automatically
+    // Allow any vercel.app or railway.app domain automatically
     if (
       allowedOrigins.includes(origin) ||
       origin.endsWith('.vercel.app') ||
@@ -50,10 +55,23 @@ app.use(cors({
   credentials: true,
 }));
 
+// ── Manual CORS Headers (Extra safety for Railway) ──
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // ── Rate Limiting ───────────────────────────
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { success: false, error: 'Too many requests, please try again later.' },
 });
 app.use('/api/', limiter);
@@ -61,7 +79,9 @@ app.use('/api/', limiter);
 // Stricter limit for auth endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { success: false, error: 'Too many auth attempts, please try again after 15 minutes.' },
 });
 app.use('/api/auth/', authLimiter);
@@ -81,14 +101,14 @@ app.get('/health', (req, res) => {
 });
 
 // ── API Routes ──────────────────────────────
-app.use('/api/auth', authRoutes);
-app.use('/api/business', businessRoutes);
-app.use('/api/sales', salesRoutes);
+app.use('/api/auth',      authRoutes);
+app.use('/api/business',  businessRoutes);
+app.use('/api/sales',     salesRoutes);
 app.use('/api/purchases', purchasesRoutes);
-app.use('/api/products', productsRoutes);
-app.use('/api/parties', partiesRoutes);
-app.use('/api/gst', gstRoutes);
-app.use('/api/export', exportRoutes);
+app.use('/api/products',  productsRoutes);
+app.use('/api/parties',   partiesRoutes);
+app.use('/api/gst',       gstRoutes);
+app.use('/api/export',    exportRoutes);
 
 // ── 404 Handler ─────────────────────────────
 app.use('*', (req, res) => {
